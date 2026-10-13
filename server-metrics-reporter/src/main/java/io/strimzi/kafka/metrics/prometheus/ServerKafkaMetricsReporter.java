@@ -43,6 +43,7 @@ public class ServerKafkaMetricsReporter extends ClientMetricsReporter {
     public void configure(Map<String, ?> map) {
         config = new ServerMetricsReporterConfig(map, registry);
         httpServer = config.startHttpServer();
+        otlpExporter = config.startOtlpExporter();
         LOG.debug("ServerKafkaMetricsReporter configured with {}", config);
     }
 

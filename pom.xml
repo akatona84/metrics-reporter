@@ -124,6 +124,16 @@
         <artifactId>prometheus-metrics-exporter-httpserver</artifactId>
         <version>${prometheus.version}</version>
       </dependency>
+      <dependency>
+        <groupId>io.prometheus</groupId>
+        <artifactId>prometheus-metrics-exporter-opentelemetry</artifactId>
+        <version>${prometheus.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.prometheus</groupId>
+        <artifactId>prometheus-metrics-config</artifactId>
+        <version>${prometheus.version}</version>
+      </dependency>
 
       <dependency>
         <groupId>org.junit.jupiter</groupId>

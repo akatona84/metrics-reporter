@@ -22,6 +22,7 @@ import static io.strimzi.kafka.metrics.prometheus.ClientMetricsReporter.PREFIXES
 import static io.strimzi.kafka.metrics.prometheus.KafkaMetricsUtils.newKafkaMetric;
 import static io.strimzi.kafka.metrics.prometheus.MetricsUtils.getMetrics;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -153,4 +154,25 @@ public class ClientMetricsReporterTest {
         reporter.close();
     }
 
+
+    @Test
+    public void testReportersWithSameOtlpConfigShareExporter() {
+        // Kafka Connect runs a reporter for the worker and for each of its admin, producer and consumer clients, all
+        // reporting into the same registry. If each started its own exporter, every metric would be pushed repeatedly.
+        configs.put(ClientMetricsReporterConfig.LISTENER_ENABLE_CONFIG, "false");
+        configs.put(ClientMetricsReporterConfig.OTLP_ENABLE_CONFIG, "true");
+        configs.put(ClientMetricsReporterConfig.OTLP_ENDPOINT_CONFIG, "http://localhost:4318");
+        configs.put(ClientMetricsReporterConfig.OTLP_PROTOCOL_CONFIG, "http/protobuf");
+
+        ClientMetricsReporter worker = new ClientMetricsReporter(registry, kafkaCollector);
+        worker.configure(configs);
+        ClientMetricsReporter producer = new ClientMetricsReporter(registry, kafkaCollector);
+        producer.configure(configs);
+
+        assertTrue(worker.otlpExporter.isPresent());
+        assertSame(worker.otlpExporter.get(), producer.otlpExporter.orElseThrow());
+
+        worker.close();
+        producer.close();
+    }
 }

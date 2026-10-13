@@ -34,6 +34,11 @@ The metrics reporter has the following configurations:
 - `prometheus.metrics.reporter.listener`: The HTTP listener to expose the metrics. It must be in the `http://[host]:[port]` format. This defaults to `http://:8080`.
 - `prometheus.metrics.reporter.listener.enable`: Enable the listener to expose the metrics. This defaults to `true`.
 - `prometheus.metrics.reporter.allowlist`: A comma separated list of regex patterns to specify the metrics to collect. This defaults to `.*`.
+- `prometheus.metrics.reporter.otlp.enable`: Enable pushing the metrics to an OTLP endpoint. This defaults to `false`.
+- `prometheus.metrics.reporter.otlp.endpoint`: The OTLP endpoint to push the metrics to. It must be in the `http://[host]:[port]` or `https://[host]:[port]` format. With the `http/protobuf` protocol, the `/v1/metrics` path is appended. When not set, the standard OpenTelemetry configuration applies.
+- `prometheus.metrics.reporter.otlp.protocol`: The OTLP transport protocol, either `grpc` or `http/protobuf`. When not set, the standard OpenTelemetry configuration applies, which defaults to `grpc`.
+- `prometheus.metrics.reporter.otlp.interval.seconds`: The interval in seconds between pushes to the OTLP endpoint. When not set, the standard OpenTelemetry configuration applies, which defaults to `60`.
+- `prometheus.metrics.reporter.otlp.resource.attributes`: A comma separated list of `key=value` pairs to add as resource attributes to the metrics pushed to the OTLP endpoint, for example `k8s.pod.name=my-pod`. It uses the format of the `OTEL_RESOURCE_ATTRIBUTES` environment variable, so keys and values can be percent-encoded.
 
 ## Running
 
@@ -124,6 +129,33 @@ For example:
 ## Accessing Metrics
 
 Metrics are exposed on the configured listener on the `GET /metrics` endpoint. For example, by default this is `http://localhost:8080/metrics`.
+
+### Pushing Metrics with OTLP
+
+Instead of, or in addition to, exposing them for scraping, the reporter can push the metrics to an OTLP endpoint such as an OpenTelemetry Collector.
+The same metrics are pushed, with the same names, as are exposed on the listener, and the `allowlist` applies to both.
+For example, to only push the metrics:
+
+```properties
+prometheus.metrics.reporter.listener.enable=false
+prometheus.metrics.reporter.otlp.enable=true
+prometheus.metrics.reporter.otlp.endpoint=http://my-collector:4317
+```
+
+All the components of a JVM configured with the same OTLP settings share a single exporter, so with Kafka Connect and Kafka Streams the metrics are pushed once even though the settings are repeated with the `admin.`, `producer.` and `consumer.` prefixes.
+On brokers, the exporter is started by `ServerKafkaMetricsReporter`, like the HTTP listener, and it also pushes the metrics collected by `ServerYammerMetricsReporter`.
+
+The settings above take precedence over the standard OpenTelemetry environment variables and system properties, such as `OTEL_EXPORTER_OTLP_ENDPOINT`, which can be set for other purposes like tracing.
+The settings that are not set, and the ones the reporter does not expose, such as headers (`OTEL_EXPORTER_OTLP_HEADERS`), timeouts or TLS certificates (`OTEL_EXPORTER_OTLP_CERTIFICATE`), are taken from the standard OpenTelemetry configuration.
+Resource attributes from `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_SERVICE_NAME` are merged with the configured ones.
+
+The reporter cannot push metrics if the `otel.metrics.exporter` system property or the `OTEL_METRICS_EXPORTER` environment variable is set to a value that does not include `otlp`, for example `none`, and fails to start in that case.
+
+Metrics are converted to OTLP following the OpenTelemetry conventions: the `_total` suffix of counters and the unit suffixes are not part of the metric names.
+Backends converting OTLP metrics back to the Prometheus format, like Prometheus or the OpenTelemetry Collector Prometheus exporter, add them back.
+
+The OTLP exporter depends on `io.prometheus:prometheus-metrics-exporter-opentelemetry`, which bundles a shaded OpenTelemetry SDK.
+Client applications that don't push metrics with OTLP can exclude it.
 
 ## Getting help
 

@@ -13,6 +13,7 @@ import io.strimzi.kafka.metrics.prometheus.common.PrometheusCollector;
 import io.strimzi.kafka.metrics.prometheus.http.HttpServers;
 import io.strimzi.kafka.metrics.prometheus.kafka.KafkaCollector;
 import io.strimzi.kafka.metrics.prometheus.kafka.KafkaMetricWrapper;
+import io.strimzi.kafka.metrics.prometheus.otlp.OtlpExporters;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.metrics.MetricsContext;
@@ -46,6 +47,7 @@ public class ClientMetricsReporter extends AbstractReporter implements MetricsRe
 
     private ClientMetricsReporterConfig config;
     Optional<HttpServers.ServerCounter> httpServer = Optional.empty();
+    Optional<OtlpExporters.ExporterCounter> otlpExporter = Optional.empty();
     @SuppressFBWarnings({"UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR"}) // This field is initialized in the contextChange method
     String prefix;
 
@@ -69,6 +71,7 @@ public class ClientMetricsReporter extends AbstractReporter implements MetricsRe
     public void configure(Map<String, ?> map) {
         config = new ClientMetricsReporterConfig(map, registry);
         httpServer = config.startHttpServer();
+        otlpExporter = config.startOtlpExporter();
         LOG.debug("ClientMetricsReporter configured with {}", config);
     }
 
@@ -95,6 +98,7 @@ public class ClientMetricsReporter extends AbstractReporter implements MetricsRe
     public void close() {
         kafkaCollector.removeReporter(this);
         httpServer.ifPresent(HttpServers::release);
+        otlpExporter.ifPresent(OtlpExporters::release);
     }
 
     @Override

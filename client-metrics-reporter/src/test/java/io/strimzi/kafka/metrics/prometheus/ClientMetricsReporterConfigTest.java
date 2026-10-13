@@ -16,9 +16,15 @@ import java.util.Optional;
 import static io.strimzi.kafka.metrics.prometheus.ClientMetricsReporterConfig.ALLOWLIST_CONFIG;
 import static io.strimzi.kafka.metrics.prometheus.ClientMetricsReporterConfig.LISTENER_CONFIG;
 import static io.strimzi.kafka.metrics.prometheus.ClientMetricsReporterConfig.LISTENER_ENABLE_CONFIG;
+import static io.strimzi.kafka.metrics.prometheus.ClientMetricsReporterConfig.OTLP_ENABLE_CONFIG;
+import static io.strimzi.kafka.metrics.prometheus.ClientMetricsReporterConfig.OTLP_ENDPOINT_CONFIG;
+import static io.strimzi.kafka.metrics.prometheus.ClientMetricsReporterConfig.OTLP_INTERVAL_SECONDS_CONFIG;
+import static io.strimzi.kafka.metrics.prometheus.ClientMetricsReporterConfig.OTLP_PROTOCOL_CONFIG;
+import static io.strimzi.kafka.metrics.prometheus.ClientMetricsReporterConfig.OTLP_RESOURCE_ATTRIBUTES_CONFIG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -104,5 +110,64 @@ public class ClientMetricsReporterConfigTest {
         HttpServers.release(httpServerOptional.get());
         HttpServers.release(httpServerOptional2.get());
     }
-}
 
+    @Test
+    public void testOtlpDefaults() {
+        ClientMetricsReporterConfig config = new ClientMetricsReporterConfig(Map.of(), new PrometheusRegistry());
+
+        assertFalse(config.isOtlpEnabled());
+        assertNull(config.otlpSettings().endpoint());
+        assertNull(config.otlpSettings().protocol());
+        assertNull(config.otlpSettings().intervalSeconds());
+        assertTrue(config.otlpSettings().resourceAttributes().isEmpty());
+        assertTrue(config.startOtlpExporter().isEmpty());
+    }
+
+    @Test
+    public void testOtlpOverrides() {
+        Map<String, String> props = Map.of(
+            OTLP_ENABLE_CONFIG, "true",
+            OTLP_ENDPOINT_CONFIG, "http://my-collector:4318",
+            OTLP_PROTOCOL_CONFIG, "http/protobuf",
+            OTLP_INTERVAL_SECONDS_CONFIG, "15",
+            OTLP_RESOURCE_ATTRIBUTES_CONFIG, "k8s.pod.name=my-pod, k8s.namespace.name=my-namespace");
+        ClientMetricsReporterConfig config = new ClientMetricsReporterConfig(props, new PrometheusRegistry());
+
+        assertTrue(config.isOtlpEnabled());
+        assertEquals("http://my-collector:4318", config.otlpSettings().endpoint());
+        assertEquals("http/protobuf", config.otlpSettings().protocol());
+        assertEquals(Integer.valueOf(15), config.otlpSettings().intervalSeconds());
+        assertEquals(Map.of("k8s.pod.name", "my-pod", "k8s.namespace.name", "my-namespace"),
+                config.otlpSettings().resourceAttributes());
+    }
+
+    @Test
+    public void testOtlpValidation() {
+        assertThrows(ConfigException.class,
+                () -> new ClientMetricsReporterConfig(Map.of(OTLP_ENDPOINT_CONFIG, "my-collector:4317"), null));
+        assertThrows(ConfigException.class,
+                () -> new ClientMetricsReporterConfig(Map.of(OTLP_PROTOCOL_CONFIG, "http/json"), null));
+        assertThrows(ConfigException.class,
+                () -> new ClientMetricsReporterConfig(Map.of(OTLP_INTERVAL_SECONDS_CONFIG, "0"), null));
+        assertThrows(ConfigException.class,
+                () -> new ClientMetricsReporterConfig(Map.of(OTLP_RESOURCE_ATTRIBUTES_CONFIG, "k8s.pod.name"), null));
+        assertThrows(ConfigException.class,
+                () -> new ClientMetricsReporterConfig(Map.of(OTLP_RESOURCE_ATTRIBUTES_CONFIG, "=my-pod"), null));
+    }
+
+    @Test
+    public void testOtlpResourceAttributeValueMayContainEquals() {
+        Map<String, String> props = Map.of(OTLP_RESOURCE_ATTRIBUTES_CONFIG, "key=a=b");
+        ClientMetricsReporterConfig config = new ClientMetricsReporterConfig(props, new PrometheusRegistry());
+
+        assertEquals(Map.of("key", "a=b"), config.otlpSettings().resourceAttributes());
+    }
+
+    @Test
+    public void testOtlpResourceAttributesArePercentDecoded() {
+        Map<String, String> props = Map.of(OTLP_RESOURCE_ATTRIBUTES_CONFIG, "team=a%2Cb%3Dc,owner=Jane%20Doe,version=1+2");
+        ClientMetricsReporterConfig config = new ClientMetricsReporterConfig(props, new PrometheusRegistry());
+
+        assertEquals(Map.of("team", "a,b=c", "owner", "Jane Doe", "version", "1+2"), config.otlpSettings().resourceAttributes());
+    }
+}

@@ -59,6 +59,8 @@ public class ServerMetricsReporterConfig extends ClientMetricsReporterConfig {
                 "listener=" + listener +
                 ", listenerEnabled=" + listenerEnabled +
                 ", allowlist=" + allowlist +
+                ", otlpEnabled=" + otlpEnabled +
+                ", otlpSettings=" + otlpSettings +
                 '}';
     }
 }
