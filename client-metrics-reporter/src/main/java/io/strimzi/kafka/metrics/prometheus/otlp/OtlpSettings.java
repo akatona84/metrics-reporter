@@ -23,6 +23,19 @@ public final class OtlpSettings {
     private final String protocol;
     private final Integer intervalSeconds;
     private final Map<String, String> resourceAttributes;
+    private final OtlpTls tls;
+
+    /**
+     * Constructor, without TLS settings.
+     *
+     * @param endpoint The OTLP endpoint, or null to use the OpenTelemetry configuration
+     * @param protocol The OTLP transport protocol, or null to use the OpenTelemetry configuration
+     * @param intervalSeconds The interval between pushes, or null to use the OpenTelemetry configuration
+     * @param resourceAttributes The resource attributes to add to the exported metrics
+     */
+    public OtlpSettings(String endpoint, String protocol, Integer intervalSeconds, Map<String, String> resourceAttributes) {
+        this(endpoint, protocol, intervalSeconds, resourceAttributes, OtlpTls.NONE);
+    }
 
     /**
      * Constructor.
@@ -31,12 +44,14 @@ public final class OtlpSettings {
      * @param protocol The OTLP transport protocol, or null to use the OpenTelemetry configuration
      * @param intervalSeconds The interval between pushes, or null to use the OpenTelemetry configuration
      * @param resourceAttributes The resource attributes to add to the exported metrics
+     * @param tls The TLS settings
      */
-    public OtlpSettings(String endpoint, String protocol, Integer intervalSeconds, Map<String, String> resourceAttributes) {
+    public OtlpSettings(String endpoint, String protocol, Integer intervalSeconds, Map<String, String> resourceAttributes, OtlpTls tls) {
         this.endpoint = endpoint;
         this.protocol = protocol;
         this.intervalSeconds = intervalSeconds;
         this.resourceAttributes = Map.copyOf(resourceAttributes);
+        this.tls = Objects.requireNonNull(tls);
     }
 
     /**
@@ -96,6 +111,14 @@ public final class OtlpSettings {
         return resourceAttributes;
     }
 
+    /**
+     * The TLS settings.
+     * @return The TLS settings
+     */
+    public OtlpTls tls() {
+        return tls;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -104,12 +127,13 @@ public final class OtlpSettings {
         return Objects.equals(endpoint, other.endpoint)
                 && Objects.equals(protocol, other.protocol)
                 && Objects.equals(intervalSeconds, other.intervalSeconds)
-                && resourceAttributes.equals(other.resourceAttributes);
+                && resourceAttributes.equals(other.resourceAttributes)
+                && tls.equals(other.tls);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(endpoint, protocol, intervalSeconds, resourceAttributes);
+        return Objects.hash(endpoint, protocol, intervalSeconds, resourceAttributes, tls);
     }
 
     @Override
@@ -119,6 +143,7 @@ public final class OtlpSettings {
                 ", protocol=" + protocol +
                 ", intervalSeconds=" + intervalSeconds +
                 ", resourceAttributes=" + resourceAttributes +
+                ", tls=" + tls +
                 '}';
     }
 }

@@ -12,11 +12,21 @@ import org.apache.kafka.common.config.ConfigException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 /**
  * Class to keep track of all the OTLP exporters started by all the Kafka components in a JVM.
@@ -31,6 +41,9 @@ public class OtlpExporters {
     static final String METRICS_EXPORTER_ENV_VAR = "OTEL_METRICS_EXPORTER";
     private static final String METRICS_PATH = "/v1/metrics";
     private static final String DEFAULT_PROTOCOL = "grpc";
+    static final String CERTIFICATE_PROPERTY = "otel.exporter.otlp.metrics.certificate";
+    static final String CLIENT_CERTIFICATE_PROPERTY = "otel.exporter.otlp.metrics.client.certificate";
+    static final String CLIENT_KEY_PROPERTY = "otel.exporter.otlp.metrics.client.key";
 
     private OtlpExporters() {
         // utility class that shouldn't be instantiated
@@ -117,6 +130,66 @@ public class OtlpExporters {
     }
 
     /**
+     * Run the given action with the TLS settings set as the metrics-specific OpenTelemetry system properties.
+     * The Prometheus properties don't have TLS options, and the OpenTelemetry SDK only accepts the certificates and
+     * the key as file paths. So the PEM values are written to temporary files only readable by the current user, and
+     * the system properties are set while the exporter is created, as the SDK reads the files at that time. Both are
+     * removed afterwards. This is called with the class lock held, so exporters are not created concurrently.
+     */
+    /* test */ static <T> T withTlsSystemProperties(OtlpTls tls, Supplier<T> action) {
+        if (tls.isEmpty()) {
+            return action.get();
+        }
+
+        Map<String, String> properties = new LinkedHashMap<>();
+        List<Path> files = new ArrayList<>();
+        try {
+            if (tls.trustedCertificates() != null) {
+                properties.put(CERTIFICATE_PROPERTY, writeTemporaryFile(files, tls.trustedCertificates()));
+            }
+            if (tls.certificateChain() != null) {
+                properties.put(CLIENT_CERTIFICATE_PROPERTY, writeTemporaryFile(files, tls.certificateChain()));
+                properties.put(CLIENT_KEY_PROPERTY, writeTemporaryFile(files, tls.privateKey()));
+            }
+
+            Map<String, String> previous = new HashMap<>();
+            properties.forEach((name, value) -> previous.put(name, System.setProperty(name, value)));
+            try {
+                return action.get();
+            } finally {
+                previous.forEach((name, value) -> {
+                    if (value == null) {
+                        System.clearProperty(name);
+                    } else {
+                        System.setProperty(name, value);
+                    }
+                });
+            }
+        } finally {
+            for (Path file : files) {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException e) {
+                    LOG.warn("Failed to delete the temporary file {}", file, e);
+                }
+            }
+        }
+    }
+
+    private static String writeTemporaryFile(List<Path> files, String content) {
+        try {
+            Path file = FileSystems.getDefault().supportedFileAttributeViews().contains("posix")
+                    ? Files.createTempFile("strimzi-otlp-", ".pem", PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
+                    : Files.createTempFile("strimzi-otlp-", ".pem");
+            files.add(file);
+            Files.writeString(file, content, StandardCharsets.UTF_8);
+            return file.toString();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to write the OTLP TLS configuration to a temporary file", e);
+        }
+    }
+
+    /**
      * Class used to keep track of the OTLP exporter started with given settings.
      */
     public static class ExporterCounter {
@@ -142,9 +215,9 @@ public class OtlpExporters {
                     .exporterOpenTelemetryProperties(properties.build())
                     .build();
             try {
-                this.exporter = OpenTelemetryExporter.builder(config)
+                this.exporter = withTlsSystemProperties(settings.tls(), () -> OpenTelemetryExporter.builder(config)
                         .registry(registry)
-                        .buildAndStart();
+                        .buildAndStart());
             } catch (RuntimeException e) {
                 throw new IllegalStateException("Failed to start the OTLP exporter with " + settings, e);
             }

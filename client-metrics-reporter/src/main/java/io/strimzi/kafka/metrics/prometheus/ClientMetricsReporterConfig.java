@@ -10,12 +10,15 @@ import io.strimzi.kafka.metrics.prometheus.http.HttpServers;
 import io.strimzi.kafka.metrics.prometheus.http.Listener;
 import io.strimzi.kafka.metrics.prometheus.otlp.OtlpExporters;
 import io.strimzi.kafka.metrics.prometheus.otlp.OtlpSettings;
+import io.strimzi.kafka.metrics.prometheus.otlp.OtlpTls;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.config.types.Password;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -105,6 +108,43 @@ public class ClientMetricsReporterConfig extends AbstractConfig {
             "resource attributes to the metrics pushed to the OTLP endpoint, in the format of the OTEL_RESOURCE_ATTRIBUTES " +
             "environment variable. Keys and values can be percent-encoded.";
 
+    /**
+     * Configuration key for the path to a PEM file with the trusted certificates used to verify the OTLP endpoint.
+     */
+    public static final String OTLP_SSL_TRUSTSTORE_LOCATION_CONFIG = CONFIG_PREFIX + OtlpTls.TRUSTSTORE_LOCATION;
+    private static final String OTLP_SSL_TRUSTSTORE_LOCATION_CONFIG_DOC = "The path to a PEM file with the trusted certificates " +
+            "used to verify the OTLP endpoint. When not set, the JVM default trust store is used.";
+
+    /**
+     * Configuration key for the trusted certificates used to verify the OTLP endpoint, in PEM format.
+     */
+    public static final String OTLP_SSL_TRUSTSTORE_CERTIFICATES_CONFIG = CONFIG_PREFIX + OtlpTls.TRUSTSTORE_CERTIFICATES;
+    private static final String OTLP_SSL_TRUSTSTORE_CERTIFICATES_CONFIG_DOC = "The trusted certificates used to verify the " +
+            "OTLP endpoint, in PEM format. Cannot be set together with " + OTLP_SSL_TRUSTSTORE_LOCATION_CONFIG + ".";
+
+    /**
+     * Configuration key for the path to a PEM file with the private key and the certificate chain used for mTLS.
+     */
+    public static final String OTLP_SSL_KEYSTORE_LOCATION_CONFIG = CONFIG_PREFIX + OtlpTls.KEYSTORE_LOCATION;
+    private static final String OTLP_SSL_KEYSTORE_LOCATION_CONFIG_DOC = "The path to a PEM file with the private key and " +
+            "the certificate chain used to authenticate to the OTLP endpoint with mTLS.";
+
+    /**
+     * Configuration key for the certificate chain used for mTLS, in PEM format.
+     */
+    public static final String OTLP_SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG = CONFIG_PREFIX + OtlpTls.KEYSTORE_CERTIFICATE_CHAIN;
+    private static final String OTLP_SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG_DOC = "The certificate chain used to authenticate " +
+            "to the OTLP endpoint with mTLS, in PEM format. Must be set together with " + CONFIG_PREFIX + OtlpTls.KEYSTORE_KEY +
+            ", and cannot be set together with " + OTLP_SSL_KEYSTORE_LOCATION_CONFIG + ".";
+
+    /**
+     * Configuration key for the private key used for mTLS, in PEM format.
+     */
+    public static final String OTLP_SSL_KEYSTORE_KEY_CONFIG = CONFIG_PREFIX + OtlpTls.KEYSTORE_KEY;
+    private static final String OTLP_SSL_KEYSTORE_KEY_CONFIG_DOC = "The private key used to authenticate to the OTLP " +
+            "endpoint with mTLS, in unencrypted PKCS#8 PEM format. Must be set together with " +
+            OTLP_SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG + ".";
+
     static final ConfigDef CONFIG_DEF = new ConfigDef()
             .define(LISTENER_CONFIG, ConfigDef.Type.STRING, LISTENER_CONFIG_DEFAULT, new Listener.ListenerValidator(), ConfigDef.Importance.HIGH, LISTENER_CONFIG_DOC)
             .define(ALLOWLIST_CONFIG, ConfigDef.Type.LIST, ALLOWLIST_CONFIG_DEFAULT, ConfigDef.Importance.HIGH, ALLOWLIST_CONFIG_DOC)
@@ -137,7 +177,12 @@ public class ClientMetricsReporterConfig extends AbstractConfig {
                         List<String> entries = (List<String>) value;
                         OtlpSettings.parseResourceAttributes(name, entries);
                     },
-                    () -> "key1=value1,key2=value2"), ConfigDef.Importance.MEDIUM, OTLP_RESOURCE_ATTRIBUTES_CONFIG_DOC);
+                    () -> "key1=value1,key2=value2"), ConfigDef.Importance.MEDIUM, OTLP_RESOURCE_ATTRIBUTES_CONFIG_DOC)
+            .define(OTLP_SSL_TRUSTSTORE_LOCATION_CONFIG, ConfigDef.Type.STRING, null, ConfigDef.Importance.MEDIUM, OTLP_SSL_TRUSTSTORE_LOCATION_CONFIG_DOC)
+            .define(OTLP_SSL_TRUSTSTORE_CERTIFICATES_CONFIG, ConfigDef.Type.PASSWORD, null, ConfigDef.Importance.MEDIUM, OTLP_SSL_TRUSTSTORE_CERTIFICATES_CONFIG_DOC)
+            .define(OTLP_SSL_KEYSTORE_LOCATION_CONFIG, ConfigDef.Type.STRING, null, ConfigDef.Importance.MEDIUM, OTLP_SSL_KEYSTORE_LOCATION_CONFIG_DOC)
+            .define(OTLP_SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG, ConfigDef.Type.PASSWORD, null, ConfigDef.Importance.MEDIUM, OTLP_SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG_DOC)
+            .define(OTLP_SSL_KEYSTORE_KEY_CONFIG, ConfigDef.Type.PASSWORD, null, ConfigDef.Importance.MEDIUM, OTLP_SSL_KEYSTORE_KEY_CONFIG_DOC);
 
     final Listener listener;
     final boolean listenerEnabled;
@@ -164,7 +209,8 @@ public class ClientMetricsReporterConfig extends AbstractConfig {
                 getString(OTLP_ENDPOINT_CONFIG),
                 getString(OTLP_PROTOCOL_CONFIG),
                 getInt(OTLP_INTERVAL_SECONDS_CONFIG),
-                OtlpSettings.parseResourceAttributes(OTLP_RESOURCE_ATTRIBUTES_CONFIG, getList(OTLP_RESOURCE_ATTRIBUTES_CONFIG)));
+                OtlpSettings.parseResourceAttributes(OTLP_RESOURCE_ATTRIBUTES_CONFIG, getList(OTLP_RESOURCE_ATTRIBUTES_CONFIG)),
+                otlpEnabled ? otlpTls() : OtlpTls.NONE);
     }
 
     /**
@@ -183,6 +229,21 @@ public class ClientMetricsReporterConfig extends AbstractConfig {
      */
     public Pattern allowlist() {
         return allowlist;
+    }
+
+    private OtlpTls otlpTls() {
+        Map<String, String> tls = new HashMap<>();
+        tls.put(OtlpTls.TRUSTSTORE_LOCATION, getString(OTLP_SSL_TRUSTSTORE_LOCATION_CONFIG));
+        tls.put(OtlpTls.TRUSTSTORE_CERTIFICATES, passwordValue(OTLP_SSL_TRUSTSTORE_CERTIFICATES_CONFIG));
+        tls.put(OtlpTls.KEYSTORE_LOCATION, getString(OTLP_SSL_KEYSTORE_LOCATION_CONFIG));
+        tls.put(OtlpTls.KEYSTORE_CERTIFICATE_CHAIN, passwordValue(OTLP_SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG));
+        tls.put(OtlpTls.KEYSTORE_KEY, passwordValue(OTLP_SSL_KEYSTORE_KEY_CONFIG));
+        return OtlpTls.fromConfig(CONFIG_PREFIX, tls);
+    }
+
+    private String passwordValue(String name) {
+        Password password = getPassword(name);
+        return password != null ? password.value() : null;
     }
 
     Pattern compileAllowlist(List<String> allowlist) {

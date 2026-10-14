@@ -39,6 +39,11 @@ The metrics reporter has the following configurations:
 - `prometheus.metrics.reporter.otlp.protocol`: The OTLP transport protocol, either `grpc` or `http/protobuf`. When not set, the standard OpenTelemetry configuration applies, which defaults to `grpc`.
 - `prometheus.metrics.reporter.otlp.interval.seconds`: The interval in seconds between pushes to the OTLP endpoint. When not set, the standard OpenTelemetry configuration applies, which defaults to `60`.
 - `prometheus.metrics.reporter.otlp.resource.attributes`: A comma separated list of `key=value` pairs to add as resource attributes to the metrics pushed to the OTLP endpoint, for example `k8s.pod.name=my-pod`. It uses the format of the `OTEL_RESOURCE_ATTRIBUTES` environment variable, so keys and values can be percent-encoded.
+- `prometheus.metrics.reporter.otlp.ssl.truststore.location`: The path to a PEM file with the trusted certificates used to verify the OTLP endpoint. When not set, the JVM default trust store is used.
+- `prometheus.metrics.reporter.otlp.ssl.truststore.certificates`: The trusted certificates used to verify the OTLP endpoint, in PEM format. It cannot be set together with `prometheus.metrics.reporter.otlp.ssl.truststore.location`.
+- `prometheus.metrics.reporter.otlp.ssl.keystore.location`: The path to a PEM file with the private key and the certificate chain used to authenticate to the OTLP endpoint with mTLS.
+- `prometheus.metrics.reporter.otlp.ssl.keystore.certificate.chain`: The certificate chain used for mTLS, in PEM format. It must be set together with `prometheus.metrics.reporter.otlp.ssl.keystore.key`, and cannot be set together with `prometheus.metrics.reporter.otlp.ssl.keystore.location`.
+- `prometheus.metrics.reporter.otlp.ssl.keystore.key`: The private key used for mTLS, in unencrypted PKCS#8 PEM format.
 
 ## Running
 
@@ -154,8 +159,18 @@ The reporter cannot push metrics if the `otel.metrics.exporter` system property 
 Metrics are converted to OTLP following the OpenTelemetry conventions: the `_total` suffix of counters and the unit suffixes are not part of the metric names.
 Backends converting OTLP metrics back to the Prometheus format, like Prometheus or the OpenTelemetry Collector Prometheus exporter, add them back.
 
+Use an `https://` endpoint to push the metrics over TLS.
+The `prometheus.metrics.reporter.otlp.ssl.*` configurations follow the names of the Kafka PEM configurations, and the inline ones can use Kafka configuration providers.
+For example, to verify the endpoint with a custom CA and authenticate with a client certificate:
+
+```properties
+prometheus.metrics.reporter.otlp.enable=true
+prometheus.metrics.reporter.otlp.endpoint=https://my-collector:4317
+prometheus.metrics.reporter.otlp.ssl.truststore.location=/etc/otlp/ca.crt
+prometheus.metrics.reporter.otlp.ssl.keystore.location=/etc/otlp/client.pem
+```
+
 The OTLP exporter depends on `io.prometheus:prometheus-metrics-exporter-opentelemetry`, which bundles a shaded OpenTelemetry SDK.
-Client applications that don't push metrics with OTLP can exclude it.
 
 ## Getting help
 

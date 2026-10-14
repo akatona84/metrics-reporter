@@ -5,6 +5,7 @@
 package io.strimzi.kafka.metrics.prometheus.otlp;
 
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsServer;
 import io.prometheus.metrics.model.registry.PrometheusRegistry;
 import io.prometheus.metrics.model.snapshots.GaugeSnapshot;
 import org.apache.kafka.common.config.ConfigException;
@@ -16,6 +17,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
@@ -27,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -152,6 +156,54 @@ public class OtlpExportersTest {
             assertTrue(request.contains("kafka_server_replicamanager_underreplicatedpartitions"));
         } finally {
             OtlpExporters.release(exporter);
+        }
+    }
+
+    @Test
+    public void testPushesMetricsWithMutualTls() throws Exception {
+        HttpsServer httpsReceiver = MutualTlsReceiver.start(requests);
+        try {
+            OtlpTls tls = OtlpTls.fromConfig("prometheus.metrics.reporter.", Map.of(
+                    OtlpTls.TRUSTSTORE_CERTIFICATES, OtlpTlsTest.resource("ca.crt"),
+                    OtlpTls.KEYSTORE_CERTIFICATE_CHAIN, OtlpTlsTest.resource("client.crt"),
+                    OtlpTls.KEYSTORE_KEY, OtlpTlsTest.resource("client.key")));
+            OtlpSettings settings = new OtlpSettings("https://localhost:" + httpsReceiver.getAddress().getPort(),
+                    "http/protobuf", 1, Map.of(), tls);
+            OtlpExporters.ExporterCounter exporter = OtlpExporters.getOrCreate(settings, registry);
+            try {
+                String request = requests.poll(30, TimeUnit.SECONDS);
+                assertNotNull(request, "No OTLP request received");
+                assertTrue(request.contains("kafka_server_replicamanager_underreplicatedpartitions"));
+            } finally {
+                OtlpExporters.release(exporter);
+            }
+        } finally {
+            httpsReceiver.stop(0);
+        }
+    }
+
+    @Test
+    public void testTlsSystemPropertiesAreRestored() throws IOException {
+        System.setProperty(OtlpExporters.CERTIFICATE_PROPERTY, "previous");
+        try {
+            OtlpTls tls = OtlpTls.fromConfig("prometheus.metrics.reporter.", Map.of(
+                    OtlpTls.TRUSTSTORE_CERTIFICATES, OtlpTlsTest.resource("ca.crt"),
+                    OtlpTls.KEYSTORE_CERTIFICATE_CHAIN, OtlpTlsTest.resource("client.crt"),
+                    OtlpTls.KEYSTORE_KEY, OtlpTlsTest.resource("client.key")));
+
+            List<Path> files = OtlpExporters.withTlsSystemProperties(tls, () -> List.of(
+                    Path.of(System.getProperty(OtlpExporters.CERTIFICATE_PROPERTY)),
+                    Path.of(System.getProperty(OtlpExporters.CLIENT_CERTIFICATE_PROPERTY)),
+                    Path.of(System.getProperty(OtlpExporters.CLIENT_KEY_PROPERTY))));
+
+            assertEquals("previous", System.getProperty(OtlpExporters.CERTIFICATE_PROPERTY));
+            assertNull(System.getProperty(OtlpExporters.CLIENT_CERTIFICATE_PROPERTY));
+            assertNull(System.getProperty(OtlpExporters.CLIENT_KEY_PROPERTY));
+            for (Path file : files) {
+                assertFalse(Files.exists(file), "Temporary file " + file + " was not deleted");
+            }
+        } finally {
+            System.clearProperty(OtlpExporters.CERTIFICATE_PROPERTY);
         }
     }
 

@@ -6,6 +6,7 @@ package io.strimzi.kafka.metrics.prometheus;
 
 import io.prometheus.metrics.model.registry.PrometheusRegistry;
 import io.strimzi.kafka.metrics.prometheus.http.HttpServers;
+import io.strimzi.kafka.metrics.prometheus.otlp.OtlpTlsTest;
 import org.apache.kafka.common.config.ConfigException;
 import org.junit.jupiter.api.Test;
 
@@ -169,5 +170,32 @@ public class ClientMetricsReporterConfigTest {
         ClientMetricsReporterConfig config = new ClientMetricsReporterConfig(props, new PrometheusRegistry());
 
         assertEquals(Map.of("team", "a,b=c", "owner", "Jane Doe", "version", "1+2"), config.otlpSettings().resourceAttributes());
+    }
+
+    @Test
+    public void testOtlpTls() throws Exception {
+        String ca = OtlpTlsTest.resource("ca.crt");
+        Map<String, String> props = Map.of(
+                OTLP_ENABLE_CONFIG, "true",
+                ClientMetricsReporterConfig.OTLP_SSL_TRUSTSTORE_CERTIFICATES_CONFIG, ca,
+                ClientMetricsReporterConfig.OTLP_SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG, OtlpTlsTest.resource("client.crt"),
+                ClientMetricsReporterConfig.OTLP_SSL_KEYSTORE_KEY_CONFIG, OtlpTlsTest.resource("client.key"));
+        ClientMetricsReporterConfig config = new ClientMetricsReporterConfig(props, new PrometheusRegistry());
+
+        // Kafka trims the configuration values
+        assertEquals(ca.trim(), config.otlpSettings().tls().trustedCertificates());
+        assertFalse(config.toString().contains("PRIVATE KEY"));
+    }
+
+    @Test
+    public void testOtlpTlsIgnoredWhenOtlpDisabled() {
+        // The files are only read when OTLP is enabled
+        Map<String, String> props = Map.of(ClientMetricsReporterConfig.OTLP_SSL_TRUSTSTORE_LOCATION_CONFIG, "/does/not/exist.crt");
+        ClientMetricsReporterConfig config = new ClientMetricsReporterConfig(props, new PrometheusRegistry());
+
+        assertTrue(config.otlpSettings().tls().isEmpty());
+        assertThrows(ConfigException.class, () -> new ClientMetricsReporterConfig(
+                Map.of(OTLP_ENABLE_CONFIG, "true", ClientMetricsReporterConfig.OTLP_SSL_TRUSTSTORE_LOCATION_CONFIG, "/does/not/exist.crt"),
+                new PrometheusRegistry()));
     }
 }
